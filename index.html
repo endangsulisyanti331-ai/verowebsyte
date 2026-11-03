@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#111827">
+<title>Vault Video Offline</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1020;--panel:#151d31;--muted:#9aa8c2;--accent:#7c9cff;--line:#293550}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(160deg,#101a32,#090d18 65%);color:#f4f6fb;font:15px system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh}
+main{max-width:760px;margin:auto;padding:24px 16px 48px}.hero{padding:24px 4px 16px}h1{font-size:27px;margin:0 0 8px}.sub,.muted{color:var(--muted);line-height:1.5}.panel{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:18px;margin:14px 0}
+input,button{font:inherit;border-radius:12px;padding:12px;border:1px solid var(--line)}input{background:#0d1425;color:white;width:100%;margin:8px 0 12px}button{background:var(--accent);color:#081126;border:0;font-weight:700;cursor:pointer}button.secondary{background:#26334f;color:#eef2ff}button.danger{background:#642d3a;color:#fff}button:disabled{opacity:.5}.row{display:flex;gap:9px;flex-wrap:wrap}.row button{flex:1}.hidden{display:none!important}.video{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}.video:last-child{border:0}.thumb{width:56px;height:56px;border-radius:12px;background:#253451;display:grid;place-items:center;font-size:24px;flex:none}.vname{min-width:0;flex:1;overflow-wrap:anywhere}.vname strong{display:block}.vname small{color:var(--muted)}.video button{padding:9px 12px}.note{font-size:13px;color:var(--muted);line-height:1.55}.status{min-height:22px;color:#a9c0ff;margin-top:8px}video{width:100%;max-height:65vh;background:#000;border-radius:12px;margin-top:10px}dialog{width:min(94vw,700px);background:#111a2d;color:white;border:1px solid var(--line);border-radius:18px;padding:18px}dialog::backdrop{background:#000c}.topline{display:flex;justify-content:space-between;gap:12px;align-items:center}.topline h2{font-size:19px;margin:0}
+</style>
+</head>
+<body>
+<main>
+  <header class="hero"><h1>🔐 Vault Video</h1><div class="sub">Simpan video secara pribadi, lalu putar tanpa internet setelah tersimpan di perangkat ini.</div></header>
+
+  <section id="setup" class="panel hidden">
+    <h2>Buat PIN vault</h2>
+    <p class="muted">PIN digunakan untuk mengenkripsi video. Buat PIN yang kuat dan jangan sampai lupa.</p>
+    <label for="newpin">PIN / kata sandi (minimal 6 karakter)</label><input id="newpin" type="password" autocomplete="new-password">
+    <label for="confirm">Ulangi PIN</label><input id="confirm" type="password" autocomplete="new-password">
+    <button id="create">Buat vault</button><div id="setupmsg" class="status"></div>
+  </section>
+
+  <section id="login" class="panel hidden">
+    <h2>Buka vault</h2><p class="muted">Masukkan PIN untuk membuka video tersimpan.</p>
+    <input id="pin" type="password" placeholder="PIN / kata sandi" autocomplete="current-password">
+    <button id="unlock">Buka</button><div id="loginmsg" class="status"></div>
+  </section>
+
+  <section id="app" class="hidden">
+    <div class="panel">
+      <div class="topline"><h2>Video tersimpan</h2><span id="count" class="muted">0 video</span></div>
+      <p class="note">Pilih beberapa video sekaligus. File akan disalin ke penyimpanan browser dan dienkripsi; menghapus video asli dari Galeri tidak menghapus salinan di vault.</p>
+      <input id="files" type="file" accept="video/*" multiple>
+      <div class="row"><button id="add">＋ Simpan video terpilih</button><button id="lock" class="secondary">Kunci vault</button></div>
+      <div id="appmsg" class="status"></div>
+      <div id="storage" class="note"></div>
+    </div>
+    <div class="panel"><div id="list"><p class="muted">Belum ada video.</p></div></div>
+    <div class="panel note"><strong>Catatan penting:</strong> Data disimpan di penyimpanan browser pada perangkat ini, bukan cloud. Jangan hapus data situs/browser atau uninstall browser. Jika data browser terhapus, video bisa ikut hilang. Buat cadangan file asli di tempat aman.</div>
+  </section>
+</main>
+<dialog id="player"><div class="topline"><h2 id="playingtitle">Video</h2><button id="close" class="secondary">Tutup</button></div><video id="video" controls playsinline></video></dialog>
+<script>
+'use strict';
+const DB='private-video-vault-v1', STORE='items', META='meta';
+let db, key=null, objectUrl=null;
+const $=id=>document.getElementById(id);
+function show(id){['setup','login','app'].forEach(x=>$(x).classList.toggle('hidden',x!==id));}
+function message(id,s){$(id).textContent=s;}
+function openDB(){return new Promise((resolve,reject)=>{const r=indexedDB.open(DB,1);r.onupgradeneeded=()=>{const d=r.result;if(!d.objectStoreNames.contains(STORE))d.createObjectStore(STORE,{keyPath:'id'});if(!d.objectStoreNames.contains(META))d.createObjectStore(META)};r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)})}
+function req(r){return new Promise((resolve,reject)=>{r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)})}
+async function getMeta(){return req(db.transaction(META).objectStore(META).get('auth'))}
+async function setMeta(v){return req(db.transaction(META,'readwrite').objectStore(META).put(v,'auth'))}
+async function derive(pin,salt){const material=await crypto.subtle.importKey('raw',new TextEncoder().encode(pin),'PBKDF2',false,['deriveKey']);return crypto.subtle.deriveKey({name:'PBKDF2',salt,iterations:310000,hash:'SHA-256'},material,{name:'AES-GCM',length:256},false,['encrypt','decrypt'])}
+function random(n){return crypto.getRandomValues(new Uint8Array(n))}
+async function encryptFile(file){const iv=random(12), bytes=await file.arrayBuffer();const cipher=await crypto.subtle.encrypt({name:'AES-GCM',iv},key,bytes);return {id:crypto.randomUUID(),name:file.name,type:file.type||'video/mp4',size:file.size,iv:[...iv],data:cipher,created:Date.now()}}
+async function decryptItem(item){return crypto.subtle.decrypt({name:'AES-GCM',iv:new Uint8Array(item.iv)},key,item.data)}
+async function allItems(){return req(db.transaction(STORE).objectStore(STORE).getAll())}
+async function render(){const items=(await allItems()).sort((a,b)=>b.created-a.created);$('count').textContent=items.length+' video';$('list').innerHTML='';if(!items.length){$('list').innerHTML='<p class="muted">Belum ada video.</p>';return}
+ for(const item of items){const row=document.createElement('div');row.className='video';const thumb=document.createElement('div');thumb.className='thumb';thumb.textContent='▶';const info=document.createElement('div');info.className='vname';const name=document.createElement('strong');name.textContent=item.name;const detail=document.createElement('small');detail.textContent=(item.size/1024/1024).toFixed(1)+' MB';info.append(name,detail);const play=document.createElement('button');play.textContent='Putar';play.onclick=()=>playItem(item);const del=document.createElement('button');del.textContent='Hapus';del.className='danger';del.onclick=async()=>{if(confirm('Hapus video ini dari vault?')){await req(db.transaction(STORE,'readwrite').objectStore(STORE).delete(item.id));await render()}};row.append(thumb,info,play,del);$('list').append(row)}
+}
+async function playItem(item){try{const plain=await decryptItem(item);if(objectUrl)URL.revokeObjectURL(objectUrl);objectUrl=URL.createObjectURL(new Blob([plain],{type:item.type}));$('video').src=objectUrl;$('playingtitle').textContent=item.name;$('player').showModal();$('video').play().catch(()=>{})}catch(e){alert('Video gagal dibuka. PIN mungkin salah atau data rusak.')} }
+$('close').onclick=()=>{$('video').pause();$('video').removeAttribute('src');$('video').load();$('player').close();if(objectUrl)URL.revokeObjectURL(objectUrl);objectUrl=null};
+async function init(){if(!('indexedDB'in window)||!crypto.subtle){alert('Browser ini belum mendukung penyimpanan aman. Gunakan Chrome/Firefox terbaru.');return}db=await openDB();const meta=await getMeta();show(meta?'login':'setup');}
+$('create').onclick=async()=>{const p=$('newpin').value,c=$('confirm').value;if(p.length<6){message('setupmsg','PIN minimal 6 karakter.');return}if(p!==c){message('setupmsg','PIN tidak sama.');return}try{const salt=random(16);key=await derive(p,salt);await setMeta({salt:[...salt],check:[...new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:new Uint8Array(12)},key,new TextEncoder().encode('vault-ok')))]});show('app');await render();await storageInfo()}catch(e){message('setupmsg','Gagal membuat vault: '+e.message)}};
+$('unlock').onclick=async()=>{try{const m=await getMeta();const candidate=await derive($('pin').value,new Uint8Array(m.salt));await crypto.subtle.decrypt({name:'AES-GCM',iv:new Uint8Array(12)},candidate,new Uint8Array(m.check));key=candidate;$('pin').value='';show('app');await render();await storageInfo()}catch(e){message('loginmsg','PIN salah atau vault tidak dapat dibuka.')}};
+$('add').onclick=async()=>{const files=[...$('files').files];if(!files.length){message('appmsg','Pilih satu atau beberapa video terlebih dahulu.');return}const btn=$('add');btn.disabled=true;try{for(let i=0;i<files.length;i++){message('appmsg',`Mengenkripsi ${i+1}/${files.length}: ${files[i].name}`);const item=await encryptFile(files[i]);await req(db.transaction(STORE,'readwrite').objectStore(STORE).add(item))} $('files').value='';message('appmsg',files.length+' video berhasil disimpan di vault.');await render();await storageInfo()}catch(e){message('appmsg','Gagal menyimpan. Mungkin ruang penyimpanan tidak cukup. '+e.message)}finally{btn.disabled=false}};
+$('lock').onclick=()=>{key=null;$('files').value='';show('login');message('loginmsg','Vault terkunci.')};
+async function storageInfo(){if(navigator.storage&&navigator.storage.estimate){const s=await navigator.storage.estimate();$('storage').textContent=`Penyimpanan browser terpakai: ${((s.usage||0)/1024/1024).toFixed(1)} MB dari perkiraan ${(s.quota/1024/1024/1024).toFixed(1)} GB.`;if(navigator.storage.persist)navigator.storage.persist().catch(()=>{})}}
+init().catch(e=>alert('Tidak dapat membuka database: '+e.message));
+</script>
+</body></html>
